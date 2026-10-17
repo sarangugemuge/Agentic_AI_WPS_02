@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     use_test_doubles: bool = True
 
     # CORS
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5173,https://skill-sync-sarang18.vercel.app"
 
     @property
     def cors_origins_list(self) -> List[str]:

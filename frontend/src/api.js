@@ -3,9 +3,22 @@
  * Connects to the local FastAPI backend proxy at /api.
  */
 
-// Use VITE_API_BASE_URL if configured (e.g. https://api.skillsync.com/api), or default to relative /api
-const rawBase = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
-const BASE_URL = rawBase;
+// Resolve API base URL:
+// - If VITE_API_BASE_URL is configured (e.g. https://skillsync-rfrh.onrender.com or with /api), ensure /api suffix
+// - If in production (non-localhost) and not configured, default to the live Render backend (/api)
+// - If local development, default to relative /api (handled by Vite proxy)
+function resolveBaseUrl() {
+  const envUrl = (import.meta.env.VITE_API_BASE_URL || '').trim();
+  if (envUrl) {
+    const stripped = envUrl.replace(/\/+$/, '');
+    return stripped.endsWith('/api') ? stripped : `${stripped}/api`;
+  }
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return 'https://skillsync-rfrh.onrender.com/api';
+  }
+  return '/api';
+}
+const BASE_URL = resolveBaseUrl();
 
 async function handleResponse(response) {
   if (!response.ok) {
