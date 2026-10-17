@@ -8,8 +8,8 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
-from sqlalchemy import select
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -103,6 +103,36 @@ async def github_webhook(
 
     if x_github_event == "ping":
         logger.info("[Webhook] Received ping event from GitHub. Webhook configuration verified.")
+        if x_github_delivery:
+            stmt = select(WebhookDelivery).where(WebhookDelivery.delivery_id == x_github_delivery)
+            res = await db.execute(stmt)
+            existing = res.scalar_one_or_none()
+            if not existing:
+                repo_id = None
+                try:
+                    p_body = json.loads(raw_body.decode("utf-8"))
+                    repo_info = p_body.get("repository", {})
+                    fn = repo_info.get("full_name") or ""
+                    if "/" in fn:
+                        p_owner, p_repo = fn.split("/", 1)
+                        r_stmt = select(Repository).where(
+                            func.lower(Repository.github_owner) == p_owner.lower(),
+                            func.lower(Repository.repo_name) == p_repo.lower(),
+                        )
+                        r_res = await db.execute(r_stmt)
+                        matched_repo = r_res.scalar_one_or_none()
+                        if matched_repo:
+                            repo_id = matched_repo.id
+                except Exception:
+                    pass
+
+                db.add(WebhookDelivery(
+                    delivery_id=x_github_delivery,
+                    repository_id=repo_id,
+                    event_type="ping",
+                    status="ping_acknowledged",
+                ))
+                await db.commit()
         return {"status": "ok", "message": "pong", "event": "ping"}
 
     if x_github_event != "push":
@@ -160,10 +190,10 @@ async def github_webhook(
         )
     owner, repo_short_name = parts[0], parts[1]
 
-    # Find repository in database
+    # Find repository in database (case-insensitive to match GitHub behavior)
     repo_stmt = select(Repository).where(
-        Repository.github_owner == owner,
-        Repository.repo_name == repo_short_name,
+        func.lower(Repository.github_owner) == owner.lower(),
+        func.lower(Repository.repo_name) == repo_short_name.lower(),
     )
     repo_res = await db.execute(repo_stmt)
     repository = repo_res.scalar_one_or_none()
@@ -185,7 +215,11 @@ async def github_webhook(
         }
 
     # ── 6. Commit Identification & Branch Filtering ─────────────────────
-    new_commit_sha = payload.get("after")
+    new_commit_sha = (
+        payload.get("after")
+        or (payload.get("head_commit", {}) or {}).get("id")
+        or (payload.get("commits", [{}])[0].get("id") if payload.get("commits") else None)
+    )
     ref = payload.get("ref", "")
     default_branch = repository.default_branch or "main"
 
@@ -275,10 +309,14 @@ async def github_webhook(
 )
 async def list_webhook_deliveries(
     limit: int = 50,
+    repository_id: Optional[int] = Query(None, description="Optional repository ID filter"),
     db: AsyncSession = Depends(get_db),
 ):
     """Retrieve audit history of webhook delivery attempts."""
-    stmt = select(WebhookDelivery).order_by(WebhookDelivery.id.desc()).limit(limit)
+    stmt = select(WebhookDelivery)
+    if repository_id is not None:
+        stmt = stmt.where(WebhookDelivery.repository_id == repository_id)
+    stmt = stmt.order_by(WebhookDelivery.id.desc()).limit(limit)
     res = await db.execute(stmt)
     records = res.scalars().all()
     return {
@@ -295,4 +333,40 @@ async def list_webhook_deliveries(
             }
             for d in records
         ],
+    }
+
+
+@router.get(
+    "/webhooks/status",
+    summary="Check webhook receiver status and configuration",
+    description="Returns webhook configuration status, whether secret is configured, and recent delivery health.",
+)
+async def get_webhook_status(
+    repository_id: Optional[int] = Query(None, description="Optional repository ID filter"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check webhook readiness and delivery statistics."""
+    secret_configured = bool(settings.github_webhook_secret)
+    deliv_stmt = select(WebhookDelivery)
+    if repository_id is not None:
+        deliv_stmt = deliv_stmt.where(WebhookDelivery.repository_id == repository_id)
+    deliv_stmt = deliv_stmt.order_by(WebhookDelivery.id.desc()).limit(5)
+    res = await db.execute(deliv_stmt)
+    recent = res.scalars().all()
+
+    return {
+        "configured": secret_configured,
+        "endpoint": "/api/webhooks/github",
+        "has_received_events": len(recent) > 0,
+        "recent_count": len(recent),
+        "latest_delivery": (
+            {
+                "delivery_id": recent[0].delivery_id,
+                "status": recent[0].status,
+                "event_type": recent[0].event_type,
+                "created_at": recent[0].created_at.isoformat() if recent[0].created_at else None,
+            }
+            if recent
+            else None
+        ),
     }

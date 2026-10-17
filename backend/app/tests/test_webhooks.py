@@ -73,9 +73,10 @@ async def test_webhook_missing_or_invalid_signature(client: AsyncClient):
 
 
 async def test_webhook_ping_event(client: AsyncClient):
-    """GitHub sends a ping event when a webhook is created. Must respond with 200 pong."""
+    """GitHub sends a ping event when a webhook is created. Must respond with 200 pong and record delivery."""
     payload = json.dumps({"zen": "Keep it logically awesome."}).encode("utf-8")
     sig = sign_payload(payload, settings.github_webhook_secret)
+    deliv_id = str(uuid.uuid4())
 
     res = await client.post(
         "/api/webhooks/github",
@@ -83,6 +84,7 @@ async def test_webhook_ping_event(client: AsyncClient):
         headers={
             "Content-Type": "application/json",
             "X-GitHub-Event": "ping",
+            "X-GitHub-Delivery": deliv_id,
             "X-Hub-Signature-256": sig,
         },
     )
@@ -90,6 +92,12 @@ async def test_webhook_ping_event(client: AsyncClient):
     data = res.json()
     assert data["status"] == "ok"
     assert data["message"] == "pong"
+
+    # Verify delivery record exists in audit log
+    deliv_res = await client.get("/api/webhooks/deliveries?limit=5")
+    assert deliv_res.status_code == 200
+    deliv_data = deliv_res.json()
+    assert any(d["delivery_id"] == deliv_id and d["status"] == "ping_acknowledged" for d in deliv_data["deliveries"])
 
 
 async def test_webhook_unsupported_event(client: AsyncClient):
@@ -237,3 +245,102 @@ async def test_webhook_non_default_branch_ignored(client: AsyncClient):
     data = res.json()
     assert data["status"] == "ignored"
     assert "non-default branch" in data["message"]
+
+
+async def test_webhook_case_insensitive_repository(client: AsyncClient):
+    """Repository matching must be case-insensitive to handle GitHub casing variations."""
+    # Register repository with mixed casing
+    repo_res = await client.post(
+        "/api/repositories",
+        json={
+            "github_url": "https://github.com/CaseOwner/CaseRepo",
+            "description": "Test case insensitivity",
+        },
+    )
+    assert repo_res.status_code == 201
+
+    prof_res = await client.post(
+        "/api/job-profiles",
+        json={"title": "Case Test Engineer", "raw_description": "Proficient in Python and Git."},
+    )
+    prof_id = prof_res.json()["id"]
+
+    await client.post(
+        "/api/assessments",
+        json={"repository_id": repo_res.json()["id"], "job_profile_id": prof_id},
+    )
+
+    # Deliver push with lowercase owner and repo name
+    deliv_id = str(uuid.uuid4())
+    payload_dict = make_push_payload(
+        owner="caseowner",
+        repo="caserepo",
+        branch="main",
+        commit_sha="a0b1c2d3e4f5678901234567890abcdef1234567",
+    )
+    payload_bytes = json.dumps(payload_dict).encode("utf-8")
+    sig = sign_payload(payload_bytes, settings.github_webhook_secret)
+
+    res = await client.post(
+        "/api/webhooks/github",
+        content=payload_bytes,
+        headers={
+            "Content-Type": "application/json",
+            "X-GitHub-Event": "push",
+            "X-GitHub-Delivery": deliv_id,
+            "X-Hub-Signature-256": sig,
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "reassessed"
+
+
+async def test_webhook_commit_sha_fallback(client: AsyncClient):
+    """When 'after' is missing, SHA must fallback to head_commit.id or commits[0].id."""
+    deliv_id = str(uuid.uuid4())
+    fallback_sha = "f1f2f3f4f5f678901234567890abcdef12345678"
+    payload_dict = {
+        "ref": "refs/heads/main",
+        "after": None,
+        "head_commit": {"id": fallback_sha, "message": "Squashed commit"},
+        "repository": {
+            "name": "Hello-World",
+            "full_name": "octocat/Hello-World",
+            "default_branch": "main",
+            "owner": {"login": "octocat"},
+        },
+    }
+    payload_bytes = json.dumps(payload_dict).encode("utf-8")
+    sig = sign_payload(payload_bytes, settings.github_webhook_secret)
+
+    res = await client.post(
+        "/api/webhooks/github",
+        content=payload_bytes,
+        headers={
+            "Content-Type": "application/json",
+            "X-GitHub-Event": "push",
+            "X-GitHub-Delivery": deliv_id,
+            "X-Hub-Signature-256": sig,
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "reassessed"
+    assert data["commit_sha"] == fallback_sha
+
+
+async def test_webhook_status_and_filtered_deliveries(client: AsyncClient):
+    """Verify /api/webhooks/status endpoint and filtered deliveries query."""
+    status_res = await client.get("/api/webhooks/status")
+    assert status_res.status_code == 200
+    status_data = status_res.json()
+    assert status_data["configured"] is True
+    assert status_data["endpoint"] == "/api/webhooks/github"
+
+    # Filtered deliveries
+    deliv_res = await client.get("/api/webhooks/deliveries?limit=5&repository_id=999999")
+    assert deliv_res.status_code == 200
+    deliv_data = deliv_res.json()
+    assert deliv_data["deliveries"] == []
+

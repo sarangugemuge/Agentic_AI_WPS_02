@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../api';
 import { GapSolverSection } from '../components/GapSolverSection';
 
@@ -19,6 +20,7 @@ export function DashboardPage({ onNavigate, assessmentId }) {
   const [showWebhookModal, setShowWebhookModal] = useState(false);
   const [webhookDeliveries, setWebhookDeliveries] = useState([]);
   const [loadingDeliveries, setLoadingDeliveries] = useState(false);
+  const [deliveryError, setDeliveryError] = useState(null);
 
   // Fetch assessments and select the target or latest one
   useEffect(() => {
@@ -109,6 +111,23 @@ export function DashboardPage({ onNavigate, assessmentId }) {
     };
   }, []);
 
+  // Handle Escape key and body scroll locking when webhook modal is open
+  useEffect(() => {
+    if (!showWebhookModal) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setShowWebhookModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [showWebhookModal]);
+
   async function handleManualSync() {
     if (!currentAssessment?.repository_id) return;
     setIsSyncing(true);
@@ -129,17 +148,24 @@ export function DashboardPage({ onNavigate, assessmentId }) {
     }
   }
 
-  async function openWebhookSettings() {
-    setShowWebhookModal(true);
+  async function refreshWebhookDeliveries() {
     setLoadingDeliveries(true);
+    setDeliveryError(null);
     try {
-      const res = await api.getWebhookDeliveries(20);
+      const repoId = currentAssessment?.repository_id || null;
+      const res = await api.getWebhookDeliveries(20, repoId);
       setWebhookDeliveries(res.deliveries || []);
     } catch (err) {
       console.error('Failed to load deliveries:', err);
+      setDeliveryError(err.message || 'Failed to retrieve delivery records from server.');
     } finally {
       setLoadingDeliveries(false);
     }
+  }
+
+  async function openWebhookSettings() {
+    setShowWebhookModal(true);
+    await refreshWebhookDeliveries();
   }
 
   // Switch to another assessment from dropdown
@@ -762,138 +788,370 @@ export function DashboardPage({ onNavigate, assessmentId }) {
         </div>
       </div>
 
-      {/* ── Webhook Configuration & Audit Modal ────────────────────── */}
-      {showWebhookModal && (
+      {/* ── Webhook Configuration & Audit Modal (Mounted via Portal) ── */}
+      {showWebhookModal && typeof document !== 'undefined' && createPortal(
         <div
-          className="modal-overlay animate-fade-in"
+          className="modal-overlay"
           style={{
             position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(16, 24, 40, 0.72)',
+            backdropFilter: 'blur(6px)',
+            WebkitBackdropFilter: 'blur(6px)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            zIndex: 1000,
+            zIndex: 99999,
             padding: 'var(--space-4)',
+            overflowY: 'auto',
+            margin: 0,
           }}
           onClick={() => setShowWebhookModal(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="webhook-modal-title"
         >
           <div
-            className="modal-content card"
+            className="modal-dialog"
             style={{
-              maxWidth: 750,
+              maxWidth: 720,
               width: '100%',
-              maxHeight: '85vh',
-              overflowY: 'auto',
-              background: 'var(--surface-color)',
-              border: '1px solid var(--border-color)',
-              padding: 'var(--space-6)',
+              maxHeight: '90vh',
+              background: '#FFFFFF',
+              color: 'var(--color-navy)',
+              border: '1px solid var(--color-navy-20)',
+              borderRadius: 'var(--radius-xl)',
+              boxShadow: 'var(--shadow-xl), 0 25px 50px -12px rgba(16, 24, 40, 0.25)',
+              display: 'flex',
+              flexDirection: 'column',
               position: 'relative',
+              overflow: 'hidden',
+              margin: 'auto',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
-              <h2 className="text-xl font-bold">GitHub Webhook Integration</h2>
-              <button className="btn btn-xs btn-outline" onClick={() => setShowWebhookModal(false)}>
+            {/* Modal Header */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: 'var(--space-5) var(--space-6)',
+                borderBottom: '1px solid var(--color-navy-10)',
+                backgroundColor: '#FFFFFF',
+                flexShrink: 0,
+              }}
+            >
+              <div>
+                <h2
+                  id="webhook-modal-title"
+                  style={{
+                    fontSize: 'var(--font-size-xl)',
+                    fontWeight: 'var(--font-weight-bold)',
+                    color: 'var(--color-navy)',
+                    margin: 0,
+                  }}
+                >
+                  GitHub Webhook Integration
+                </h2>
+                <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-navy-40)', margin: 'var(--space-1) 0 0 0' }}>
+                  Automated push synchronization & continuous candidate evaluation
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-sm btn-secondary"
+                onClick={() => setShowWebhookModal(false)}
+                style={{
+                  flexShrink: 0,
+                  padding: 'var(--space-1) var(--space-3)',
+                  fontSize: 'var(--font-size-xs)',
+                  fontWeight: 'var(--font-weight-medium)',
+                  color: 'var(--color-navy-60)',
+                  borderColor: 'var(--color-navy-20)',
+                }}
+                title="Close dialog (Esc)"
+                aria-label="Close dialog"
+              >
                 ✕ Close
               </button>
             </div>
 
-            <p className="text-sm text-muted" style={{ marginBottom: 'var(--space-4)' }}>
-              Connect your GitHub repository to enable <strong>automatic synchronization</strong>. Whenever code is pushed, SkillSync analyzes new commits, extracts code evidence, and dynamically recalculates scores for all saved job profiles.
-            </p>
+            {/* Modal Scrollable Body */}
+            <div style={{ padding: 'var(--space-6)', overflowY: 'auto', flex: 1 }}>
+              <p
+                style={{
+                  fontSize: 'var(--font-size-sm)',
+                  color: 'var(--color-navy-60)',
+                  lineHeight: 'var(--line-height-relaxed)',
+                  marginBottom: 'var(--space-5)',
+                }}
+              >
+                Connect your GitHub repository to enable <strong>automatic synchronization</strong>. Whenever code is pushed, SkillSync analyzes new commits, extracts code evidence, and dynamically recalculates scores for all saved job profiles.
+              </p>
 
-            {/* Webhook Parameters Box */}
-            <div className="card" style={{ background: 'var(--background-color)', padding: 'var(--space-4)', marginBottom: 'var(--space-6)', border: '1px solid var(--border-color)' }}>
-              <div style={{ marginBottom: 'var(--space-3)' }}>
-                <span className="text-xs text-muted font-semibold" style={{ display: 'block', textTransform: 'uppercase' }}>
-                  1. Payload URL
-                </span>
-                <code className="text-sm font-mono" style={{ color: 'var(--primary-color)', userSelect: 'all' }}>
-                  {(import.meta.env.VITE_API_BASE_URL
-                    ? import.meta.env.VITE_API_BASE_URL.replace(/\/api\/?$/, '')
-                    : window.location.origin.replace(':5173', ':8000'))}/api/webhooks/github
-                </code>
+              {/* Webhook Parameters Box */}
+              <div
+                style={{
+                  background: 'var(--color-surface)',
+                  border: '1px solid var(--color-navy-10)',
+                  borderRadius: 'var(--radius-lg)',
+                  padding: 'var(--space-5)',
+                  marginBottom: 'var(--space-6)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 'var(--space-4)',
+                }}
+              >
+                {/* 1. Payload URL */}
+                <div>
+                  <span
+                    style={{
+                      display: 'block',
+                      fontSize: 'var(--font-size-xs)',
+                      fontWeight: 'var(--font-weight-bold)',
+                      color: 'var(--color-navy-60)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      marginBottom: 'var(--space-1)',
+                    }}
+                  >
+                    1. Payload URL
+                  </span>
+                  <div
+                    style={{
+                      background: '#FFFFFF',
+                      border: '1px solid var(--color-navy-20)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: 'var(--space-2) var(--space-3)',
+                    }}
+                  >
+                    <code
+                      style={{
+                        fontFamily: 'monospace',
+                        fontSize: 'var(--font-size-xs)',
+                        color: 'var(--color-primary)',
+                        wordBreak: 'break-all',
+                        userSelect: 'all',
+                        display: 'block',
+                      }}
+                    >
+                      {api.getWebhookUrl ? api.getWebhookUrl() : `${window.location.origin}/api/webhooks/github`}
+                    </code>
+                  </div>
+                </div>
+
+                {/* 2. Content Type & 3. Secret Token */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 'var(--space-4)' }}>
+                  <div>
+                    <span
+                      style={{
+                        display: 'block',
+                        fontSize: 'var(--font-size-xs)',
+                        fontWeight: 'var(--font-weight-bold)',
+                        color: 'var(--color-navy-60)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.04em',
+                        marginBottom: 'var(--space-1)',
+                      }}
+                    >
+                      2. Content type
+                    </span>
+                    <div
+                      style={{
+                        background: '#FFFFFF',
+                        border: '1px solid var(--color-navy-20)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: 'var(--space-2) var(--space-3)',
+                      }}
+                    >
+                      <code style={{ fontFamily: 'monospace', fontSize: 'var(--font-size-xs)', color: 'var(--color-navy)' }}>
+                        application/json
+                      </code>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span
+                      style={{
+                        display: 'block',
+                        fontSize: 'var(--font-size-xs)',
+                        fontWeight: 'var(--font-weight-bold)',
+                        color: 'var(--color-navy-60)',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.04em',
+                        marginBottom: 'var(--space-1)',
+                      }}
+                    >
+                      3. Secret Token
+                    </span>
+                    <div
+                      style={{
+                        background: '#FFFFFF',
+                        border: '1px solid var(--color-navy-20)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: 'var(--space-2) var(--space-3)',
+                      }}
+                    >
+                      <code style={{ fontFamily: 'monospace', fontSize: 'var(--font-size-xs)', color: 'var(--color-navy)', userSelect: 'all' }}>
+                        skillsync-webhook-secret
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Trigger Events */}
+                <div
+                  style={{
+                    background: '#FFFFFF',
+                    border: '1px solid var(--color-navy-10)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: 'var(--space-3) var(--space-4)',
+                  }}
+                >
+                  <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-navy-60)' }}>
+                    <strong>4. Events:</strong> In GitHub repository webhook settings, select <strong>Just the push event</strong>.
+                  </span>
+                </div>
               </div>
 
-              <div style={{ marginBottom: 'var(--space-3)' }}>
-                <span className="text-xs text-muted font-semibold" style={{ display: 'block', textTransform: 'uppercase' }}>
-                  2. Content type
-                </span>
-                <code className="text-sm font-mono">application/json</code>
+              {/* Webhook Deliveries Audit Table */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 'var(--space-3)',
+                }}
+              >
+                <h3
+                  style={{
+                    fontSize: 'var(--font-size-base)',
+                    fontWeight: 'var(--font-weight-semibold)',
+                    color: 'var(--color-navy)',
+                    margin: 0,
+                  }}
+                >
+                  Recent Webhook Deliveries & Audit Log
+                </h3>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  onClick={refreshWebhookDeliveries}
+                  disabled={loadingDeliveries}
+                  title="Refresh webhook delivery history"
+                  style={{
+                    padding: 'var(--space-1) var(--space-3)',
+                    fontSize: 'var(--font-size-xs)',
+                    color: 'var(--color-primary)',
+                    borderColor: 'var(--color-primary)',
+                  }}
+                >
+                  {loadingDeliveries ? 'Refreshing...' : '🔄 Refresh'}
+                </button>
               </div>
 
-              <div style={{ marginBottom: 'var(--space-3)' }}>
-                <span className="text-xs text-muted font-semibold" style={{ display: 'block', textTransform: 'uppercase' }}>
-                  3. Secret Token
-                </span>
-                <code className="text-sm font-mono" style={{ userSelect: 'all' }}>
-                  skillsync-webhook-secret
-                </code>
-              </div>
-
-              <div>
-                <span className="text-xs text-muted font-semibold" style={{ display: 'block', textTransform: 'uppercase' }}>
-                  4. Which events would you like to trigger this webhook?
-                </span>
-                <span className="text-sm">Select <strong>Just the push event</strong></span>
-              </div>
+              {deliveryError ? (
+                <div className="alert alert-error text-xs" style={{ padding: 'var(--space-3)', marginBottom: 'var(--space-4)' }}>
+                  <strong>Connection Error:</strong> {deliveryError}
+                </div>
+              ) : loadingDeliveries ? (
+                <p className="text-xs text-muted" style={{ padding: 'var(--space-3) 0' }}>Loading delivery records...</p>
+              ) : webhookDeliveries.length === 0 ? (
+                <div className="alert alert-info text-xs" style={{ padding: 'var(--space-3)' }}>
+                  No webhook deliveries received yet. Push a commit to your connected GitHub repository to see live deliveries appear here.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    border: '1px solid var(--color-navy-10)',
+                    borderRadius: 'var(--radius-md)',
+                    overflowX: 'auto',
+                    backgroundColor: '#FFFFFF',
+                  }}
+                >
+                  <table className="table" style={{ width: '100%', fontSize: 'var(--font-size-xs)', margin: 0 }}>
+                    <thead>
+                      <tr style={{ background: 'var(--color-surface)' }}>
+                        <th style={{ padding: 'var(--space-2) var(--space-3)' }}>Status</th>
+                        <th style={{ padding: 'var(--space-2) var(--space-3)' }}>Delivery ID</th>
+                        <th style={{ padding: 'var(--space-2) var(--space-3)' }}>Commit SHA</th>
+                        <th style={{ padding: 'var(--space-2) var(--space-3)' }}>Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {webhookDeliveries.map((deliv, idx) => (
+                        <tr key={deliv.id || deliv.delivery_id || idx} style={{ borderTop: '1px solid var(--color-navy-10)' }}>
+                          <td style={{ padding: 'var(--space-2) var(--space-3)' }}>
+                            <span
+                              className={`badge badge-${
+                                deliv.status === 'processed'
+                                  ? 'demonstrated'
+                                  : deliv.status === 'queued'
+                                  ? 'primary'
+                                  : deliv.status === 'duplicate'
+                                  ? 'secondary'
+                                  : deliv.status === 'ping_acknowledged'
+                                  ? 'info'
+                                  : 'warning'
+                              }`}
+                            >
+                              {deliv.status}
+                            </span>
+                          </td>
+                          <td className="font-mono text-xs" style={{ padding: 'var(--space-2) var(--space-3)' }}>
+                            {deliv.delivery_id ? String(deliv.delivery_id).slice(0, 16) : 'N/A'}
+                          </td>
+                          <td className="font-mono text-xs" style={{ padding: 'var(--space-2) var(--space-3)' }}>
+                            {deliv.commit_sha ? String(deliv.commit_sha).slice(0, 7) : 'HEAD'}
+                          </td>
+                          <td className="text-muted text-xs" style={{ padding: 'var(--space-2) var(--space-3)' }}>
+                            {(() => {
+                              try {
+                                const d = deliv.created_at ? new Date(deliv.created_at) : null;
+                                return d && !isNaN(d.getTime()) ? d.toLocaleTimeString() : 'N/A';
+                              } catch {
+                                return 'N/A';
+                              }
+                            })()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
-            {/* Webhook Deliveries Audit Table */}
-            <h3 className="text-base font-semibold" style={{ marginBottom: 'var(--space-3)' }}>
-              Recent Webhook Deliveries & Audit Log
-            </h3>
-
-            {loadingDeliveries ? (
-              <p className="text-xs text-muted">Loading delivery records...</p>
-            ) : webhookDeliveries.length === 0 ? (
-              <div className="alert alert-info text-xs" style={{ padding: 'var(--space-3)' }}>
-                No webhook deliveries received yet. Push a commit to your connected GitHub repository to see live deliveries appear here.
-              </div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table className="table" style={{ width: '100%', fontSize: 'var(--text-xs)' }}>
-                  <thead>
-                    <tr>
-                      <th>Status</th>
-                      <th>Delivery ID</th>
-                      <th>Commit SHA</th>
-                      <th>Time</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {webhookDeliveries.map((deliv) => (
-                      <tr key={deliv.id}>
-                        <td>
-                          <span
-                            className={`badge badge-${
-                              deliv.status === 'processed'
-                                ? 'success'
-                                : deliv.status === 'queued'
-                                ? 'primary'
-                                : deliv.status === 'duplicate'
-                                ? 'secondary'
-                                : 'warning'
-                            }`}
-                          >
-                            {deliv.status}
-                          </span>
-                        </td>
-                        <td className="font-mono text-xs">{deliv.delivery_id ? deliv.delivery_id.slice(0, 16) : 'N/A'}</td>
-                        <td className="font-mono text-xs">{deliv.commit_sha ? deliv.commit_sha.slice(0, 7) : 'HEAD'}</td>
-                        <td className="text-muted text-xs">
-                          {deliv.created_at ? new Date(deliv.created_at).toLocaleTimeString() : 'N/A'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            {/* Modal Footer */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                padding: 'var(--space-3) var(--space-6)',
+                borderTop: '1px solid var(--color-navy-10)',
+                backgroundColor: 'var(--color-surface)',
+                flexShrink: 0,
+              }}
+            >
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={() => setShowWebhookModal(false)}
+              >
+                Done
+              </button>
+            </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
+
     </main>
   );
 }

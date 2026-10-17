@@ -353,7 +353,8 @@ async def test_phase_g_security_isolation_and_error_handling(client: AsyncClient
 
     # Webhook valid signature
     import hmac, hashlib
-    secret = b"skillsync-webhook-secret"
+    from app.core.config import settings
+    secret = settings.github_webhook_secret.encode("utf-8")
     body = b'{"zen": "Non-destructive testing."}'
     sig = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
 

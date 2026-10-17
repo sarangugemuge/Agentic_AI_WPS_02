@@ -165,8 +165,28 @@ export const api = {
     return handleResponse(res);
   },
 
-  async getWebhookDeliveries(limit = 20) {
-    const res = await fetch(`${BASE_URL}/webhooks/deliveries?limit=${limit}`);
+  getWebhookUrl() {
+    if (BASE_URL.startsWith('http://') || BASE_URL.startsWith('https://')) {
+      return `${BASE_URL}/webhooks/github`;
+    }
+    const origin = typeof window !== 'undefined'
+      ? window.location.origin.replace(':5173', ':8000')
+      : 'http://localhost:8000';
+    return `${origin}/api/webhooks/github`;
+  },
+
+  async getWebhookDeliveries(limit = 20, repositoryId = null) {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (repositoryId) {
+      query.append('repository_id', String(repositoryId));
+    }
+    const res = await fetch(`${BASE_URL}/webhooks/deliveries?${query.toString()}`);
+    return handleResponse(res);
+  },
+
+  async getWebhookStatus(repositoryId = null) {
+    const query = repositoryId ? `?repository_id=${repositoryId}` : '';
+    const res = await fetch(`${BASE_URL}/webhooks/status${query}`);
     return handleResponse(res);
   },
 
