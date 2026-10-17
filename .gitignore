@@ -1,0 +1,67 @@
+# ── Secrets & Environment ──────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env*.example
+*.env.local
+*.env.*.local
+
+# ── Credentials & Certificates ─────────────────────────────────────
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+id_rsa
+id_ed25519
+
+# ── Python ─────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+backend/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+*.cover
+
+# ── SQLite Database ────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Logs ───────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Node / Frontend ────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+node_modules/
+
+# ── OS & Editor ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+!.vscode/extensions.json
+*.code-workspace
