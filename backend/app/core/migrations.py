@@ -5,7 +5,7 @@ Ensures zero data loss while adding tables, columns, indexes, and normalized rec
 """
 import json
 import logging
-from typing import Dict, List, Set
+from typing import Any, Dict, List, Set
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
