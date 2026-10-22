@@ -1,5 +1,6 @@
 # SkillSync — Evidence-Backed AI Skill Assessment Platform
 
+
 SkillSync analyzes software engineering candidates by evaluating their real GitHub repositories against job descriptions using Google Gemini AI. Every demonstrated skill is backed by file-level citations, commit identifiers, and line-level code provenance. When candidates push new commits, SkillSync automatically re-evaluates the repository and records versioned assessment histories.
 
 ---
